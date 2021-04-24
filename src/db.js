@@ -36,7 +36,7 @@ const posts = [
     id: '12',
     title: 'How im supposed to do',
     body: "You didn't wanna know",
-    published: false,
+    published: true,
     authorId: '2',
   },
 ]

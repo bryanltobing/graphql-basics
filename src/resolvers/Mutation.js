@@ -68,7 +68,7 @@ const Mutation = {
 
     return user
   },
-  createPost(parent, args, { db: { users } }, info) {
+  createPost(parent, args, { db: { users, posts }, pubSub }, info) {
     const userExists = users.some((user) => user.id === args.data.author)
 
     if (!userExists) {
@@ -83,24 +83,43 @@ const Mutation = {
 
     posts.push(post)
 
+    if (post.published) {
+      pubSub.publish('POST', {
+        post: {
+          mutation: 'CREATED',
+          data: post,
+        },
+      })
+    }
+
     return post
   },
-  deletePost(parent, args, { db: { posts, comments } }, info) {
+  deletePost(parent, args, { db: { posts, comments }, pubSub }, info) {
     const postIndex = posts.findIndex((post) => post.id === args.id)
 
     if (postIndex === -1) {
       throw new Error('No post exist')
     }
     // Delete the post
-    const deletedPost = posts.splice(postIndex, 1)
+    const [deletedPost] = posts.splice(postIndex, 1)
 
     comments = comments.filter((comment) => comment.postId !== args.id)
 
-    return deletedPost[0]
+    if (deletedPost.published) {
+      pubSub.publish('POST', {
+        post: {
+          mutation: 'DELETED',
+          data: deletedPost,
+        },
+      })
+    }
+
+    return deletedPost
   },
-  updatePost(parent, args, { db: { posts } }, info) {
+  updatePost(parent, args, { db: { posts }, pubSub }, info) {
     const { id, data } = args
     const post = posts.find((post) => post.id === id)
+    const originalPost = { ...post }
 
     if (!post) {
       throw new Error('No post found')
@@ -116,11 +135,39 @@ const Mutation = {
 
     if (typeof data.published === 'boolean') {
       post.published = data.published
+
+      if (originalPost.published && !post.published) {
+        pubSub.publish('POST', {
+          post: {
+            mutation: 'DELETED',
+            data: originalPost,
+          },
+        })
+      } else if (!originalPost.published && post.published) {
+        pubSub.publish('POST', {
+          post: {
+            mutation: 'CREATED',
+            data: post,
+          },
+        })
+      }
+    } else if (post.published) {
+      pubSub.publish('POST', {
+        post: {
+          mutation: 'UPDATED',
+          data: post,
+        },
+      })
     }
 
     return post
   },
-  createComment(parent, args, { db: { users } }, info) {
+  createComment(
+    parent,
+    args,
+    { db: { users, posts, comments }, pubSub },
+    info
+  ) {
     const userExist = users.some((user) => user.id === args.data.author)
     const postExist = posts.some(
       (post) => post.id === args.data.post && post.published
@@ -136,13 +183,19 @@ const Mutation = {
       authorId: args.data.author,
       postId: args.data.post,
     }
-    console.log(comment)
 
     comments.push(comment)
 
+    pubSub.publish(`COMMENT ${args.data.post}`, {
+      comment: {
+        mutation: 'CREATED',
+        data: comment,
+      },
+    })
+
     return comment
   },
-  deleteComment(parent, args, { db: { comments } }, info) {
+  deleteComment(parent, args, { db: { comments }, pubSub }, info) {
     const commentIndex = comments.findIndex((comment) => comment.id === args.id)
 
     if (commentIndex === -1) {
@@ -150,10 +203,18 @@ const Mutation = {
     }
 
     // delete comment
-    const deletedComment = comments.splice(commentIndex, 1)
-    return deletedComment[0]
+    const [deletedComment] = comments.splice(commentIndex, 1)
+
+    pubSub.publish(`COMMENT ${deletedComment.postId}`, {
+      comment: {
+        mutation: 'DELETED',
+        data: deletedComment,
+      },
+    })
+
+    return deletedComment
   },
-  updateComment(parent, args, { db: { comments } }, info) {
+  updateComment(parent, args, { db: { comments }, pubSub }, info) {
     const { id, data } = args
     const comment = comments.find((comment) => comment.id === id)
 
@@ -164,6 +225,13 @@ const Mutation = {
     if (typeof data.text === 'string') {
       comment.text = data.text
     }
+
+    pubSub.publish(`COMMENT ${comment.postId}`, {
+      comment: {
+        mutation: 'UPDATED',
+        data: comment,
+      },
+    })
 
     return comment
   },
